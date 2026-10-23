@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { csvCell, hashPassword, imageMime, verifyPassword } from "../src/lib/security";
+import { csvCell, hashPassword, imageMime, passwordNeedsRehash, verifyPassword } from "../src/lib/security";
 import { isOverdue, todayInMongolia, type Task } from "../src/lib/types";
 
 test("passwords use unique salts and reject incorrect passwords", async () => {
@@ -10,6 +10,10 @@ test("passwords use unique salts and reject incorrect passwords", async () => {
   assert.equal(await verifyPassword("Long-test-password!",one),true);
   assert.equal(await verifyPassword("wrong-password",one),false);
   assert.equal(await verifyPassword("Long-test-password!","bad-hash"),false);
+  const [,salt,derived] = one.split("$");
+  assert.equal(await verifyPassword("Long-test-password!",`${salt}:${derived}`),true);
+  assert.equal(passwordNeedsRehash(`${salt}:${derived}`),true);
+  assert.equal(passwordNeedsRehash(one),false);
 });
 test("screenshot validation reads file signatures, not extensions", () => {
   assert.equal(imageMime(Buffer.from("<svg><script>alert(1)</script></svg>")),null);

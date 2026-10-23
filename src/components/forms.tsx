@@ -5,13 +5,24 @@ import { PLATFORMS, shortDate, type Task, type User } from "@/lib/types";
 import { api, Avatar, Busy, Modal, PlatformBadge, StatusBadge } from "./ui";
 
 type FormProps = { onClose: () => void; onSaved: () => Promise<void> };
-export function TaskForm({ task, users, today, onClose, onSaved }: FormProps & { task?: Task; users: User[]; today: string }) {
+export function TaskForm({ task, users, user, today, onClose, onSaved }: FormProps & { task?: Task; users: User[]; user: User; today: string }) {
   const [busy,setBusy] = useState(false); const [error,setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); const values = Object.fromEntries(new FormData(event.currentTarget));
     try { await api(task ? `tasks/${task.id}` : "tasks",values,task ? "PATCH" : "POST"); await onSaved(); onClose(); } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   }
-  return <Modal title={task ? "Төлөвлөгөө засах" : "Шинэ ажил төлөвлөх"} onClose={onClose}><form onSubmit={submit} className="form-stack modal-body"><p className="muted">Хариуцагч, хугацаа болон хийх ажлыг тодорхой оруулаарай.</p><label>Ажлын нэр<input name="title" placeholder="Жишээ: Шинэ бүтээгдэхүүний танилцуулга пост" defaultValue={task?.title} minLength={3} maxLength={180} required autoFocus/></label><label>Дэлгэрэнгүй заавар<textarea name="description" placeholder="Юу хийх, ямар үр дүн хүлээж байгаагаа бичээрэй…" rows={4} maxLength={5000} defaultValue={task?.description}/></label><label>Хариуцах ажилтан<select name="assigneeId" defaultValue={task?.assigneeId || ""} required><option value="" disabled>Ажилтан сонгох</option>{users.filter(u => u.active).map(u => <option key={u.id} value={u.id}>{u.name}{u.role === "admin" ? " · Админ" : ""}</option>)}</select></label><div className="form-row"><label>Суваг<select name="platform" defaultValue={task?.platform || "Facebook"}>{PLATFORMS.map(p => <option key={p}>{p}</option>)}</select></label><label>Дуусах огноо<input type="date" name="dueDate" defaultValue={task?.dueDate || today} required/></label></div><label>Ач холбогдол<select name="priority" defaultValue={task?.priority || "normal"}><option value="normal">Энгийн</option><option value="high">Өндөр</option></select></label>{error && <p role="alert" className="form-error">{error}</p>}<div className="form-actions"><button type="button" className="button secondary" onClick={onClose}>Болих</button><button disabled={busy} className="button primary"><Busy busy={busy}>{task ? "Өөрчлөлт хадгалах" : "Ажил үүсгэх"}</Busy></button></div></form></Modal>;
+  return <Modal title={task ? "Төлөвлөгөө засах" : "Шинэ төлөвлөгөө"} onClose={onClose}>
+    <form onSubmit={submit} className="form-stack modal-body plan-form">
+      <p className="muted">{user.role === "admin" ? "Хийх ажил, хариуцагч, хугацааг оруулаад төлөвлөгөөг хадгалаарай." : "Өөрийн хийх ажил, суваг, хугацааг оруулаарай. Төлөвлөгөө тань админд мөн харагдана."}</p>
+      <label>Ажлын нэр<input name="title" placeholder="Жишээ: Шинэ бүтээгдэхүүний танилцуулга пост" defaultValue={task?.title} minLength={3} maxLength={180} required autoFocus/></label>
+      <label>Дэлгэрэнгүй тайлбар<textarea name="description" placeholder="Юу хийх, ямар үр дүн хүлээж байгаагаа бичээрэй…" rows={4} maxLength={5000} defaultValue={task?.description}/></label>
+      {user.role === "admin" ? <label>Хариуцах ажилтан<select name="assigneeId" defaultValue={task?.assigneeId || ""} required><option value="" disabled>Ажилтан сонгох</option>{users.filter(u => u.active).map(u => <option key={u.id} value={u.id}>{u.name}{u.role === "admin" ? " · Админ" : ""}</option>)}</select></label> : <div className="plan-owner"><Avatar name={user.name}/><span><small>Хариуцах ажилтан</small><strong>{user.name} · Би</strong></span><input type="hidden" name="assigneeId" value={user.id}/></div>}
+      <div className="form-row"><label>Суваг<select name="platform" defaultValue={task?.platform || "Facebook"}>{PLATFORMS.map(p => <option key={p}>{p}</option>)}</select></label><label>Дуусах огноо<input type="date" name="dueDate" defaultValue={task?.dueDate || today} required/></label></div>
+      <label>Ач холбогдол<select name="priority" defaultValue={task?.priority || "normal"}><option value="normal">Энгийн</option><option value="high">Өндөр</option></select></label>
+      {error && <p role="alert" className="form-error">{error}</p>}
+      <div className="form-actions"><button type="button" className="button secondary" onClick={onClose} disabled={busy}>Болих</button><button disabled={busy} className="button primary"><Busy busy={busy}>{task ? "Өөрчлөлт хадгалах" : "Төлөвлөгөө хадгалах"}</Busy></button></div>
+    </form>
+  </Modal>;
 }
 export function UserForm({ user, selfId, onClose, onSaved }: FormProps & { user?: User; selfId: string }) {
   const [busy,setBusy] = useState(false); const [error,setError] = useState("");
