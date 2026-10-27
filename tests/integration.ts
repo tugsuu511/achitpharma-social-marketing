@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import path from "node:path";
 import type { Workspace } from "../src/lib/types";
 
 async function main() {
   const root = process.cwd();
+  const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+  const testDatabaseUrlUnpooled = process.env.TEST_DATABASE_URL_UNPOOLED || testDatabaseUrl;
+  if (!testDatabaseUrl || !testDatabaseUrlUnpooled) throw new Error("TEST_DATABASE_URL and TEST_DATABASE_URL_UNPOOLED must point to an empty disposable Neon branch.");
+  const databaseEnv = { DATABASE_URL: testDatabaseUrl, DATABASE_URL_UNPOOLED: testDatabaseUrlUnpooled };
   mkdirSync(path.join(root,"test-results"), { recursive: true });
   const dataDir = mkdtempSync(path.join(root,"test-results","integration-"));
   const port = 3199; const origin = `http://127.0.0.1:${port}`;
   let logs = "";
-  const server = spawn(process.execPath,[path.join(root,"node_modules/next/dist/bin/next"),"start","--hostname","127.0.0.1","--port",String(port)],{ cwd: root, env: { ...process.env, DATA_DIR: dataDir, APP_ORIGIN: origin, COOKIE_SECURE: "false", ALLOW_INSECURE_LOCAL_ORIGIN: "true", TRUST_PROXY: "true", IP_HASH_SECRET: "integration-test-ip-hash-secret-at-least-32-characters" }, stdio: ["ignore","pipe","pipe"], windowsHide: true });
+  const migration = spawnSync(process.execPath,["--import","tsx",path.join(root,"scripts/db-migrate.ts")],{ cwd: root, env: { ...process.env, ...databaseEnv }, encoding: "utf8", windowsHide: true });
+  assert.equal(migration.status,0,migration.stdout + migration.stderr);
+  const server = spawn(process.execPath,[path.join(root,"node_modules/next/dist/bin/next"),"start","--hostname","127.0.0.1","--port",String(port)],{ cwd: root, env: { ...process.env, ...databaseEnv, DATA_DIR: dataDir, APP_ORIGIN: origin, COOKIE_SECURE: "false", ALLOW_INSECURE_LOCAL_ORIGIN: "true", TRUST_PROXY: "true", IP_HASH_SECRET: "integration-test-ip-hash-secret-at-least-32-characters" }, stdio: ["ignore","pipe","pipe"], windowsHide: true });
   server.stdout.on("data", chunk => { logs += chunk.toString(); }); server.stderr.on("data", chunk => { logs += chunk.toString(); });
   const request = async (endpoint: string, method = "GET", body?: unknown, cookie = "", overrideOrigin = origin) => {
     const form = body instanceof FormData;
@@ -25,12 +31,12 @@ async function main() {
     assert.ok(html.includes('class="app-layout"'),"Authenticated page must render the workspace shell");
     assert.ok(html.includes("Төлөвлөгөө нэмэх"),"Both admins and employees must have a plan creation button");
     assert.ok(html.includes('aria-haspopup="dialog"'),"Plan creation must announce a dialog");
-    assert.ok(!html.includes("Only plain objects"),"SQLite rows must serialize across the Server/Client boundary");
+    assert.ok(!html.includes("Only plain objects"),"Database rows must serialize across the Server/Client boundary");
     assert.doesNotMatch(html,/:E\{"digest":/,"Streamed React payload must not contain a server-render error");
   };
   const credentials = { email: "admin@example.test",password: "Admin-test-password-2026!",name: "Туршилтын админ" };
   const provision = (values: unknown) => new Promise<{ code: number | null; output: string }>((resolve, reject) => {
-    const child = spawn(process.execPath,["--import","tsx",path.join(root,"scripts/create-admin.ts"),"--stdin-json"],{ cwd: root, env: { ...process.env, DATA_DIR: dataDir }, stdio: ["pipe","pipe","pipe"], windowsHide: true });
+    const child = spawn(process.execPath,["--import","tsx",path.join(root,"scripts/create-admin.ts"),"--stdin-json"],{ cwd: root, env: { ...process.env, ...databaseEnv, DATA_DIR: dataDir }, stdio: ["pipe","pipe","pipe"], windowsHide: true });
     let output = "";
     child.stdout.on("data",chunk => { output += chunk.toString(); });
     child.stderr.on("data",chunk => { output += chunk.toString(); });

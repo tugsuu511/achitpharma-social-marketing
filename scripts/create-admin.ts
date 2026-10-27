@@ -8,7 +8,7 @@ async function main() {
   for (const filename of [".env.local", ".env"]) {
     if (existsSync(filename)) process.loadEnvFile(filename);
   }
-  if (hasAdmin()) throw new Error("Админ эрх өмнө нь үүссэн байна. Одоо байгаа эрхийг өөрчлөхгүй.");
+  if (await hasAdmin()) throw new Error("Админ эрх өмнө нь үүссэн байна. Одоо байгаа эрхийг өөрчлөхгүй.");
   let input: unknown;
   if (process.argv.includes("--stdin-json")) {
     // Automation supplies credentials via stdin, never process arguments or files.

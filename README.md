@@ -9,10 +9,11 @@ Node.js **24 болон түүнээс дээш** хувилбар шаардл�
 ```powershell
 cd C:\Projects\achitpharma-social-marketing-team
 npm.cmd install
+neon deploy
 npm.cmd run dev
 ```
 
-Хөтөч дээр **http://localhost:3000** нээнэ. Development сервер зөвхөн тухайн компьютероос хандах `localhost` хаяг дээр ажиллана. Windows PowerShell скрипт хориглодог бол дээрх шиг `npm.cmd` ашиглана.
+`neon deploy` нь link хийсэн Neon branch-ийн `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `NEON_BRANCH` утгуудыг git-ignored `.env.local` руу татна. Хөтөч дээр **http://localhost:3000** нээнэ. Development сервер зөвхөн тухайн компьютероос хандах `localhost` хаяг дээр ажиллана. Windows PowerShell скрипт хориглодог бол дээрх шиг `npm.cmd` ашиглана.
 
 1. Серверийн терминалаас `npm.cmd run admin:create` ажиллуулж анхны админы нэр, имэйл, нууц үгийг оруулна. Нууц үг терминалд харагдахгүй, баталгаажуулж давтан оруулна. Админ өмнө нь үүссэн бол командыг дахин ажиллуулахад өөрчлөлт хийхгүй. Веб дээр админ бүртгүүлэх хуудас болон API байхгүй; зөвхөн нэвтрэх дэлгэц байна. Бэлэн, нийтэд мэдэгдэх нууц үг байхгүй.
 2. **Манай баг → Ажилтан нэмэх**: ажилтны нэр, имэйл, албан тушаал, нууц үгийг оруулна.
@@ -46,40 +47,25 @@ npm.cmd run dev
 ## Технологи ба хадгалалт
 
 - Next.js App Router, TypeScript, React, Lucide icons.
-- Node.js `node:sqlite`; тусдаа гадаад database account хэрэггүй.
+- Neon Lakebase Postgres; app traffic pooled `DATABASE_URL`, migration direct `DATABASE_URL_UNPOOLED` ашиглана.
 - Нууц үг scrypt + санамсаргүй salt; нэвтрэлтийн token-ийн зөвхөн hash хадгална.
 - HttpOnly / SameSite cookie, хугацаатай session, login attempt хязгаарлалт, mutation origin шалгалт.
-- Бүтэцтэй өгөгдөл `data/workspace.sqlite` дотор, screenshot нь `data/files` private storage-д хадгалагдана. SQLite WAL ажиллаж байх үед `-wal`, `-shm` файлууд үүсэж болно.
-- `DATA_DIR` environment variable-ээр үндсэн хадгалалтыг, `PRIVATE_FILES_DIR`-ээр screenshot хадгалалтыг тусад нь өөрчилж болно.
+- Бүтэцтэй өгөгдөл Neon Postgres-д, screenshot нь `data/files` private storage-д хадгалагдана.
+- `DATA_DIR` эсвэл `PRIVATE_FILES_DIR`-ээр screenshot хадгалалтын persistent disk байрлалыг тохируулна.
 - `data/`, `.env*`, туршилтын өгөгдөл Git-д орохгүй.
 - Үсгийн фонт Google Fonts-оос ачаалах боломжтой; холболтгүй үед Segoe UI / Arial руу шилжинэ.
 
-Ажиллаж байгаа серверийн WAL өгөгдлийг багтаасан баталгаатай online backup үүсгэхдээ:
-
-```powershell
-npm.cmd run db:backup
-```
-
-Анхны утгаар backup нь Git-д орохгүй `backups/` хавтаст үүсэж, SHA-256 checksum бүхий `.json` manifest дагалдана. Production-д `BACKUP_DIR`-ийг `DATA_DIR`-ээс гадна, боломжтой бол өөр диск дээр заана. Зөвхөн `.sqlite` файлыг идэвхтэй WAL бичилтийн үеэр хуулж болохгүй.
-
-Restore нь ажиллаж буй `DATA_DIR`-ийг дарж бичдэггүй. Серверээ зогсоогоод шинэ, хоосон хавтаст сэргээж шалгана:
-
-```powershell
-npm.cmd run db:restore -- --from D:\Achitpharma\backups\workspace-....sqlite --target-dir D:\Achitpharma\restored-data
-```
-
-Checksum болон SQLite integrity шалгалт амжилттай болсны дараа серверийн `DATA_DIR`-ийг сэргээсэн хавтас руу зааж асаана. Ингэснээр хуучин өгөгдлийг устгалгүйгээр буцаах боломжтой.
-Хэрэв private файлыг тусдаа диск дээр байрлуулдаг бол `--target-files-dir D:\Achitpharma\restored-files` нэмж, шалгалтын дараа `PRIVATE_FILES_DIR`-ийг мөн тэр шинэ хавтас руу заана.
+Database backup/restore-ийг Neon-ийн branch history болон restore хэрэгслээр удирдана. Screenshot binary нь Neon Postgres-д биш persistent private disk дээр үлддэг тул `PRIVATE_FILES_DIR`-ийг тусдаа backup policy-д заавал хамруулна. Хуучин SQLite migration эх үүсвэрийг шалгах шаардлагатай үед л `legacy:db:backup` болон `legacy:db:restore` командуудыг ашиглана.
 
 ## Database migration
 
-Schema өөрчлөлтүүд `schema_migrations` хүснэгтэд version, нэр, checksum-тай бүртгэгдэнэ. Production `npm.cmd start` эхлэхийн өмнө migration автоматаар ажиллана. Гараар шалгах эсвэл ажиллуулах бол:
+Postgres schema өөрчлөлтүүд `schema_migrations` хүснэгтэд version, нэр, checksum-тай бүртгэгдэнэ. Production `npm.cmd start` эхлэхийн өмнө direct Neon connection-оор migration автоматаар ажиллана. Гараар шалгах эсвэл ажиллуулах бол:
 
 ```powershell
 npm.cmd run db:migrate
 ```
 
-Өгөгдөлтэй database-д pending migration байвал өөрчлөлтөөс өмнө `BACKUP_DIR` эсвэл `backups/` дотор `pre-migration-*.sqlite` backup болон SHA-256 manifest автоматаар үүснэ. Migration бүр тусдаа transaction дотор ажиллах бөгөөд SQL түүх өөрчлөгдсөн, database илүү шинэ version-тэй, integrity эсвэл foreign key шалгалт унасан үед startup зогсоно.
+Migration нь advisory lock болон transaction ашиглана. SQL түүх өөрчлөгдсөн эсвэл database илүү шинэ version-тэй бол startup зогсоно. Legacy SQLite өгөгдлийг хоосон Neon schema руу нэг удаа шилжүүлэхдээ `npm.cmd run db:import-sqlite` ажиллуулна; import checksum болон хүснэгт бүрийн мөрийн тоог баталгаажуулна.
 
 ## Шалгалтууд
 
@@ -87,13 +73,12 @@ npm.cmd run db:migrate
 npm.cmd run typecheck
 npm.cmd test
 npm.cmd run build
-npm.cmd run test:integration
 npm.cmd run validate
 ```
 
-`npm.cmd run validate` нь typecheck, unit test, production build, API integration шалгалтыг дээрх дарааллаар бүгдийг нь ажиллуулна.
+`npm.cmd run validate` нь typecheck, unit test, production build-ийг дээрх дарааллаар ажиллуулна.
 
-Integration шалгалт production build-ийг `127.0.0.1:3199` дээр түр ажиллуулж, тусдаа `test-results/integration-*` өгөгдөл үүсгэнэ. Бодит `data/`-д хүрэхгүй. Хоосон суурилуулалт дээр зөвхөн нэвтрэх дэлгэц харагдах, вебээр админ үүсгэх боломжгүй байх, локал CLI provisioning, нэвтрэлт, эрхийн хязгаарлалт, зураг, засварт буцаалт, батлалт, CSV, session хүчингүй болголт, login throttling-ийг шалгана. Шалгалтын сервер дуусмагцаа зогсоно.
+Бүрэн API integration шалгалтыг production database дээр хэзээ ч ажиллуулахгүй. Хоосон, устгаж болох Neon test branch-ийн `TEST_DATABASE_URL` болон `TEST_DATABASE_URL_UNPOOLED`-ийг өгөөд `npm.cmd run validate:integration` ажиллуулна. Screenshot файлууд `test-results/integration-*` дотор тусгаарлагдана.
 
 ## Серверт байрлуулах
 
@@ -102,20 +87,20 @@ npm.cmd run build
 npm.cmd start
 ```
 
-Одоогийн хувилбар нь **нэг Node.js сервер + тогтмол хадгалагдах диск** дээр ажиллах зориулалттай. Түр filesystem-тэй serverless орчинд шууд байрлуулж болохгүй. Олон сервер ашиглах шаардлага гарвал өгөгдөл, зураг хадгалалтыг shared service рүү шилжүүлнэ.
+Одоогийн хувилбар нь **Next.js Node.js server + Neon Postgres + screenshot-д зориулсан тогтмол диск** дээр ажиллана. Screenshot upload ашиглах үед түр filesystem-тэй serverless орчинд шууд байрлуулж болохгүй. Олон сервер ашиглах шаардлага гарвал private screenshot хадгалалтыг shared object storage руу шилжүүлнэ.
 
 Development сервер анхнаасаа зөвхөн `localhost:3000` дээр ажиллана. Одоогийн production `npm.cmd start` команд `127.0.0.1:3100` дээр асна. Байгууллагын хэрэглээнд оруулахдаа HTTPS reverse proxy тохируулж `APP_ORIGIN=https://таны-домэйн`, абсолют `DATA_DIR`, `COOKIE_SECURE=true`, `TRUST_PROXY=true`, 32-оос урт санамсаргүй `IP_HASH_SECRET` тавина. Эдгээр тохиргоо дутуу эсвэл буруу бол production сервер асахгүй. Proxy нь хүсэлтийн body-г 26 MB-аас илүүгүйгээр хязгаарлаж, гаднаас ирсэн `X-Forwarded-For` header-ийг дарж өөрийн баталгаатай утгыг дамжуулна. Интернэтэд нээхээс өмнө эхний админ эрхээ локал орчноос үүсгэнэ.
 
-`GET /health` нь Node.js process хариу өгч байгааг, `GET /ready` нь SQLite нээгдэж query ажиллаж байгааг шалгана. Хоёулаа cache-гүй, authentication шаардахгүй бөгөөд дотоод өгөгдөл буцаахгүй. Бүх route дээр CSP, HSTS, Permissions Policy, frame болон MIME хамгаалалтын header тавигдана.
+`GET /health` нь Node.js process хариу өгч байгааг, `GET /ready` нь Neon Postgres query болон schema version хэвийн байгааг шалгана. Хоёулаа cache-гүй, authentication шаардахгүй бөгөөд дотоод өгөгдөл буцаахгүй. Бүх route дээр CSP, HSTS, Permissions Policy, frame болон MIME хамгаалалтын header тавигдана.
 
-Одоогоор интернэтэд publish хийгдээгүй. Браузерийн автомат холболт байхгүй орчинд build болон API integration шалгалтууд хийгдсэн; бодит төхөөрөмжийн харагдах байдал, touch ажиллагааны эцсийн шалгалтыг тусад нь хийнэ.
+Одоогоор интернэтэд publish хийгдээгүй. Production build болон Neon-backed readiness/session lookup smoke шалгалт хийгдсэн; бодит төхөөрөмжийн харагдах байдал, touch ажиллагааны эцсийн шалгалтыг тусад нь хийнэ.
 ## Үйл ажиллагааны хяналт ба хамгаалалт
 
-- `npm.cmd run ops:status` нь SQLite integrity/schema version, хүснэгтийн мөрийн тоо, WAL хэмжээ, хувийн файлууд болон хамгийн сүүлийн backup-ийг JSON хэлбэрээр шалгана.
+- `npm.cmd run ops:status` нь Neon холболт/schema version, хүснэгтийн мөрийн тоо, private screenshot-ийн тоо болон checksum-ийг JSON хэлбэрээр шалгана.
 - `npm.cmd run ops:cleanup` нь хугацаа дууссан session/login оролдлого болон 365 хоногоос хуучин audit event-ийг цэвэрлэнэ. Үүнийг өдөрт нэг удаа scheduler-оор ажиллуулж болно.
 - API хүсэлт бүр JSON structured log болон `X-Request-Id`-тай. Нэвтрэлт, хэрэглэгч, ажил, review, session-ийн чухал өөрчлөлтүүд `audit_events` хүснэгтэд бүртгэгдэнэ. Админ `GET /api/audit?limit=50&cursor=...`-аар хуудслан уншина.
 - Session 7 хоногийн дээд хугацаатай, 24 цаг идэвхгүй бол хүчингүй болно. Профайлаас бүх төхөөрөмжийн session-ийг нэг дор цуцалж болно.
-- Screenshot-ийн binary SQLite дотор биш, `PRIVATE_FILES_DIR` эсвэл `DATA_DIR/files` дахь private storage-д checksum-тай хадгалагдана. Backup/restore нь database болон эдгээр файлыг хамтад нь checksum-аар шалгана.
+- Screenshot-ийн binary Postgres дотор биш, `PRIVATE_FILES_DIR` эсвэл `DATA_DIR/files` дахь private storage-д checksum-тай хадгалагдана. Database metadata болон файл зөрсөн эсэхийг `ops:status` шалгана.
 - Workspace refresh нь зөвхөн өөрчлөгдсөн ажлуудыг татна; screenshot metadata ба activity history нь ажлын дэлгэрэнгүйг нээхэд тусдаа татагдана. `GET /api/tasks` нь `limit`, `cursor`, `status`, `assignee`, `q` параметртэй сервер талын pagination/filter дэмжинэ.
 
 Production reverse proxy нь бодит client IP-г `X-Forwarded-For`-оор зөвхөн өөрөө дарж дамжуулах ёстой. `TRUST_PROXY=true`, таамаглах боломжгүй 32-оос урт `IP_HASH_SECRET`, HTTPS `APP_ORIGIN`, `COOKIE_SECURE=true`, абсолют `DATA_DIR` заавал өгнө. Log/audit-д IP-ийн зөвхөн HMAC hash хадгалагдана.

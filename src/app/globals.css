@@ -24,14 +24,14 @@
 @media(max-width:760px){.page-heading p{font-size:12px}.welcome-copy p{font-size:12px}.welcome-copy>button{font-size:12px}.welcome-banner{min-height:222px}.stat-top{font-size:12px}.stat-bottom{font-size:10px}.section-title p{font-size:11px}.section-title .text-button{font-size:10px}.task-row-title>strong{font-size:14px}.task-row-title>.platform{font-size:11px}.task-assignee,.dashboard-grid .task-row .task-assignee{font-size:11px}.task-due,.dashboard-grid .task-row .task-due{font-size:11px}.task-row>.badge{font-size:10px}.filter-tabs>button{font-size:12px}.filter-tabs>button>span{font-size:10px}.mobile-nav>button>span{font-size:10px}.mobile-nav>button{min-height:56px}.progress-legend>div{font-size:11px}.progress-caption{font-size:10px}.onboarding-tip p{font-size:11px}.onboarding-tip strong{font-size:12px}.onboarding-tip>.button{font-size:12px}.calendar-grid>button>span{font-size:14px}.timeline-header strong{font-size:12px}.timeline-header time{font-size:10px}.timeline article p{font-size:13px}.preview-grid button{width:32px;height:32px}.member-card .button{font-size:12px}.search-input input,.assignee-select select{font-size:16px}.report-dates input{font-size:16px}.report-controls .button{font-size:12px}.form-stack>label,.form-row>label{font-size:13px}.detail-meta{font-size:12px}.auth-form-wrap .form-stack>label{font-size:13px}.workspace-footer{line-height:1.8}}
 /* Supplied Achitpharma logo: preserve the complete artwork at every size. */
 .brand.brand-image{flex-direction:column;align-items:flex-start;gap:7px;width:180px;max-width:100%;white-space:normal;flex-shrink:0}
-.brand-logo-frame{display:block;width:100%;padding:7px;background:#fff;border-radius:10px}
+.brand-logo-frame{display:block;width:100%;padding:7px;background:transparent;border-radius:10px}
 .brand-logo{display:block;width:100%;height:auto;object-fit:contain}
 .brand.brand-image small{font-size:8px;letter-spacing:1.4px;line-height:1.5;margin-top:0}
 .sidebar>.brand.brand-image{width:100%;margin:0 0 26px}
-.auth-story>.brand.brand-image{width:260px}
+.auth-story>.brand.brand-image{width:260px;align-self:center;align-items:center;text-align:center}
 .brand.brand-image.brand-compact{width:104px;gap:0}
 .brand-compact .brand-logo-frame{padding:0;border-radius:4px}
-@media(max-width:760px){.auth-form-side .brand.brand-image{width:210px}.auth-form-side .brand.brand-image small{font-size:8px}}
+@media(max-width:760px){.auth-form-side>.mobile-brand{width:100%}.auth-form-side .brand.brand-image{width:210px;margin-inline:auto;align-items:center;text-align:center}.auth-form-side .brand.brand-image small{font-size:8px}}
 /* Plan entry dialogs and mobile-first planning cards. */
 .plan-owner{display:flex;align-items:center;gap:12px;background:#f3f7ef;border:1px solid #e2eada;border-radius:10px;padding:13px}
 .plan-owner>span{display:grid;gap:3px;min-width:0}

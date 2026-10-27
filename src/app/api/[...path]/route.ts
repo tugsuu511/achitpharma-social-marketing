@@ -22,7 +22,7 @@ const taskInput = z.object({ title: z.string().trim().min(3, "Ажлын нэр 
 const createTaskInput = taskInput.extend({ assigneeId: z.string().min(1).optional() });
 const messageInput = z.object({ message: z.string().trim().min(1, "Тайлбараа оруулна уу.").max(3000) });
 const now = () => new Date().toISOString();
-function activity(taskId: string, userId: string, kind: string, message: string) { db().prepare("INSERT INTO activities(id,taskId,userId,kind,message,createdAt) VALUES(?,?,?,?,?,?)").run(randomUUID(), taskId, userId, kind, message, now()); }
+async function activity(taskId: string, userId: string, kind: string, message: string) { await db().prepare("INSERT INTO activities(id,taskId,userId,kind,message,createdAt) VALUES(?,?,?,?,?,?)").run(randomUUID(), taskId, userId, kind, message, now()); }
 function originCheck(request: Request) {
   const origin = request.headers.get("origin");
   const expected = process.env.APP_ORIGIN || new URL(request.url).origin;
@@ -40,7 +40,7 @@ function ok(data: unknown = { ok: true }, status = 200) { return Response.json(d
 function failure(error: unknown) {
   if (error instanceof AppError) return ok({ error: error.message }, error.status);
   if (error instanceof z.ZodError) return ok({ error: error.issues[0]?.message || "Мэдээллээ шалгана уу." }, 400);
-  if (error instanceof Error && error.message.includes("UNIQUE constraint failed: users.email")) return ok({ error: "Энэ имэйлээр хэрэглэгч бүртгэлтэй байна." }, 409);
+  if (error && typeof error === "object" && "code" in error && error.code === "23505") return ok({ error: "Энэ имэйлээр хэрэглэгч бүртгэлтэй байна." }, 409);
   log("error","api_error",{ error: error instanceof Error ? error.name : "UnknownError" }); return ok({ error: "Алдаа гарлаа. Дахин оролдоно уу." }, 500);
 }
 
@@ -50,22 +50,23 @@ async function handleGET(request: Request, context: Context) {
     const user = await requireUser();
     if (segments[0] === "workspace") {
       const since = new URL(request.url).searchParams.get("since") || undefined;
-      return ok(workspace(user,since));
+      return ok(await workspace(user,since));
     }
-    if (segments[0] === "tasks" && segments[1]) return ok(taskDetail(segments[1],user));
-    if (segments[0] === "tasks") return ok(taskPage(user,new URL(request.url)));
-    if (segments[0] === "audit") { requireAdmin(user); return ok(auditPage(new URL(request.url))); }
+    if (segments[0] === "tasks" && segments[1]) return ok(await taskDetail(segments[1],user));
+    if (segments[0] === "tasks") return ok(await taskPage(user,new URL(request.url)));
+    if (segments[0] === "audit") { requireAdmin(user); return ok(await auditPage(new URL(request.url))); }
     if (segments[0] === "files" && segments[1]) {
-      const meta = db().prepare("SELECT taskId FROM attachments WHERE id=?").get(segments[1]) as { taskId: string } | undefined;
+      const meta = await db().prepare("SELECT taskId FROM attachments WHERE id=?").get<{ taskId: string }>(segments[1]);
       if (!meta) throw new AppError("Зураг олдсонгүй.", 404);
-      accessibleTask(meta.taskId, user);
-      const file = db().prepare("SELECT storageKey,checksum,mime FROM attachments WHERE id=?").get(segments[1]) as { storageKey: string; checksum: string; mime: string };
+      await accessibleTask(meta.taskId, user);
+      const file = await db().prepare("SELECT storageKey,checksum,mime FROM attachments WHERE id=?").get<{ storageKey: string; checksum: string; mime: string }>(segments[1]);
+      if (!file) throw new AppError("Зураг олдсонгүй.", 404);
       const data = readAttachment(file.storageKey,file.checksum);
       return new Response(new Uint8Array(data), { headers: { "Content-Type": file.mime, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox" } });
     }
     if (segments[0] === "report") {
       const url = new URL(request.url); const from = url.searchParams.get("from") || "0000-01-01"; const to = url.searchParams.get("to") || "9999-12-31";
-      const rows = workspace(user).tasks.filter(t => t.dueDate >= from && t.dueDate <= to);
+      const rows = (await workspace(user)).tasks.filter(t => t.dueDate >= from && t.dueDate <= to);
       const csv = "\ufeff" + [["Ажил", "Хариуцагч", "Суваг", "Дуусах огноо", "Төлөв", "Баталсан огноо"], ...rows.map(t => [t.title,t.assigneeName,t.platform,t.dueDate,STATUS_LABEL[t.status],t.approvedAt || ""])].map(row => row.map(csvCell).join(",")).join("\r\n");
       return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="achitpharma-report.csv"', "Cache-Control": "no-store" } });
     }
@@ -80,48 +81,49 @@ async function handlePOST(request: Request, context: Context) {
     if (resource === "login") {
       const values = z.object({ email, password: z.string().min(1).max(128) }).parse(await json(request));
       let limits;
-      try { limits = recordLoginAttempt(values.email); } catch (error) { audit("login_rate_limited",{ outcome: "blocked" }); throw error; }
-      const user = db().prepare("SELECT id,password,active FROM users WHERE email=?").get(values.email) as { id: string; password: string; active: number } | undefined;
+      try { limits = await recordLoginAttempt(values.email); } catch (error) { await audit("login_rate_limited",{ outcome: "blocked" }); throw error; }
+      const user = await db().prepare("SELECT id,password,active FROM users WHERE email=?").get<{ id: string; password: string; active: number }>(values.email);
       // Equal-cost password work for unknown accounts.
       const matched = await verifyPassword(values.password, user?.password || `${"0".repeat(32)}:${"0".repeat(128)}`);
-      if (!user || !user.active || !matched) { audit("login_failed",{ actorId: user?.id, outcome: "failure" }); throw new AppError("Имэйл эсвэл нууц үг буруу байна.",401); }
-      clearSuccessfulLogin(limits);
-      if (passwordNeedsRehash(user.password)) db().prepare("UPDATE users SET password=? WHERE id=?").run(await hashPassword(values.password),user.id);
-      await createSession(user.id); audit("login_succeeded",{ actorId: user.id }); return ok();
+      if (!user || !user.active || !matched) { await audit("login_failed",{ actorId: user?.id, outcome: "failure" }); throw new AppError("Имэйл эсвэл нууц үг буруу байна.",401); }
+      await clearSuccessfulLogin(limits);
+      if (passwordNeedsRehash(user.password)) await db().prepare("UPDATE users SET password=? WHERE id=?").run(await hashPassword(values.password),user.id);
+      await createSession(user.id); await audit("login_succeeded",{ actorId: user.id }); return ok();
     }
     const user = await requireUser();
-    if (resource === "logout") { audit("logout",{ actorId: user.id }); await logout(); return ok(); }
-    if (resource === "logout-all") { transaction(() => { db().prepare("DELETE FROM sessions WHERE userId=?").run(user.id); audit("sessions_revoked",{ actorId: user.id, targetType: "user", targetId: user.id }); }); await logout(); return ok(); }
+    if (resource === "logout") { await audit("logout",{ actorId: user.id }); await logout(); return ok(); }
+    if (resource === "logout-all") { await transaction(async () => { await db().prepare("DELETE FROM sessions WHERE userId=?").run(user.id); await audit("sessions_revoked",{ actorId: user.id, targetType: "user", targetId: user.id }); }); await logout(); return ok(); }
     if (resource === "password") {
       const values = z.object({ currentPassword: z.string().max(128), password }).parse(await json(request));
-      const row = db().prepare("SELECT password FROM users WHERE id=?").get(user.id) as { password: string };
+      const row = await db().prepare("SELECT password FROM users WHERE id=?").get<{ password: string }>(user.id);
+      if (!row) throw new AppError("Хэрэглэгч олдсонгүй.", 404);
       if (!await verifyPassword(values.currentPassword, row.password)) throw new AppError("Одоогийн нууц үг буруу байна.");
       const hash = await hashPassword(values.password);
-      transaction(() => { db().prepare("UPDATE users SET password=? WHERE id=?").run(hash,user.id); db().prepare("DELETE FROM sessions WHERE userId=?").run(user.id); audit("password_changed",{ actorId: user.id, targetType: "user", targetId: user.id }); });
+      await transaction(async () => { await db().prepare("UPDATE users SET password=? WHERE id=?").run(hash,user.id); await db().prepare("DELETE FROM sessions WHERE userId=?").run(user.id); await audit("password_changed",{ actorId: user.id, targetType: "user", targetId: user.id }); });
       await createSession(user.id); return ok();
     }
     if (resource === "users") {
       requireAdmin(user); const values = person.parse(await json(request)); const hash = await hashPassword(values.password);
-      const employeeId = randomUUID(); transaction(() => { db().prepare("INSERT INTO users(id,name,email,password,role,title,createdAt) VALUES(?,?,?,?,?,?,?)").run(employeeId,values.name,values.email,hash,"employee",values.title,now()); audit("user_created",{ actorId: user.id, targetType: "user", targetId: employeeId }); }); return ok({},201);
+      const employeeId = randomUUID(); await transaction(async () => { await db().prepare("INSERT INTO users(id,name,email,password,role,title,createdAt) VALUES(?,?,?,?,?,?,?)").run(employeeId,values.name,values.email,hash,"employee",values.title,now()); await audit("user_created",{ actorId: user.id, targetType: "user", targetId: employeeId }); }); return ok({},201);
     }
     if (resource === "tasks" && !id) {
       const values = createTaskInput.parse(await json(request));
       if (user.role !== "admin" && values.assigneeId && values.assigneeId !== user.id) throw new AppError("Зөвхөн өөрийн төлөвлөгөөг үүсгэх боломжтой.", 403);
       const assigneeId = user.role === "admin" ? values.assigneeId : user.id;
-      if (!assigneeId || !db().prepare("SELECT id FROM users WHERE id=? AND active=1").get(assigneeId)) throw new AppError("Идэвхтэй ажилтан сонгоно уу.");
+      if (!assigneeId || !await db().prepare("SELECT id FROM users WHERE id=? AND active=1").get(assigneeId)) throw new AppError("Идэвхтэй ажилтан сонгоно уу.");
       const taskId = randomUUID(); const timestamp = now();
-      transaction(() => { db().prepare("INSERT INTO tasks(id,title,description,assigneeId,platform,priority,dueDate,status,createdBy,createdAt,updatedAt) VALUES(?,?,?,?,?,?,?,'planned',?,?,?)").run(taskId,values.title,values.description,assigneeId,values.platform,values.priority,values.dueDate,user.id,timestamp,timestamp); activity(taskId,user.id,"created",user.role === "admin" ? "Ажил үүсгэж хуваариллаа." : "Өөрийн ажлын төлөвлөгөөг үүсгэлээ."); audit("task_created",{ actorId: user.id, targetType: "task", targetId: taskId, metadata: { assigneeId } }); }); return ok({ id: taskId },201);
+      await transaction(async () => { await db().prepare("INSERT INTO tasks(id,title,description,assigneeId,platform,priority,dueDate,status,createdBy,createdAt,updatedAt) VALUES(?,?,?,?,?,?,?,'planned',?,?,?)").run(taskId,values.title,values.description,assigneeId,values.platform,values.priority,values.dueDate,user.id,timestamp,timestamp); await activity(taskId,user.id,"created",user.role === "admin" ? "Ажил үүсгэж хуваариллаа." : "Өөрийн ажлын төлөвлөгөөг үүсгэлээ."); await audit("task_created",{ actorId: user.id, targetType: "task", targetId: taskId, metadata: { assigneeId } }); }); return ok({ id: taskId },201);
     }
     if (resource === "tasks" && id) {
-      const task = accessibleTask(id,user);
-      if (action === "comments") { const values = messageInput.parse(await json(request)); transaction(() => { activity(id,user.id,"comment",values.message); audit("task_commented",{ actorId: user.id, targetType: "task", targetId: id }); }); return ok(); }
+      const task = await accessibleTask(id,user);
+      if (action === "comments") { const values = messageInput.parse(await json(request)); await transaction(async () => { await activity(id,user.id,"comment",values.message); await audit("task_commented",{ actorId: user.id, targetType: "task", targetId: id }); }); return ok(); }
       if (action === "start") {
         if (user.id !== task.assigneeId) throw new AppError("Зөвхөн хариуцсан ажилтан эхлүүлнэ.",403);
-        transaction(() => {
-          const result = db().prepare("UPDATE tasks SET status='in_progress',updatedAt=? WHERE id=? AND status IN ('planned','revision')").run(now(),id);
+        await transaction(async () => {
+          const result = await db().prepare("UPDATE tasks SET status='in_progress',updatedAt=? WHERE id=? AND status IN ('planned','revision')").run(now(),id);
           if (!result.changes) throw new AppError("Ажлын төлөв өөрчлөгдсөн байна.",409);
-          activity(id,user.id,"started","Ажлаа эхлүүллээ.");
-          audit("task_started",{ actorId: user.id, targetType: "task", targetId: id });
+          await activity(id,user.id,"started","Ажлаа эхлүүллээ.");
+          await audit("task_started",{ actorId: user.id, targetType: "task", targetId: id });
         }); return ok();
       }
       if (action === "submit") {
@@ -140,14 +142,14 @@ async function handlePOST(request: Request, context: Context) {
         }));
         const stored = validated.map(file => { const attachmentId = randomUUID(); return { ...file, attachmentId, stored: storeAttachment(attachmentId,file.data) }; });
         try {
-          transaction(() => {
-            const updated = db().prepare("UPDATE tasks SET status='submitted',updatedAt=? WHERE id=? AND assigneeId=? AND status IN ('planned','in_progress','revision')").run(now(),id,user.id);
+          await transaction(async () => {
+            const updated = await db().prepare("UPDATE tasks SET status='submitted',updatedAt=? WHERE id=? AND assigneeId=? AND status IN ('planned','in_progress','revision')").run(now(),id,user.id);
             if (!updated.changes) throw new AppError("Ажлын төлөв өөрчлөгдсөн. Дахин ачаална уу.",409);
             const submissionId = randomUUID();
-            db().prepare("INSERT INTO submissions(id,taskId,userId,note,createdAt) VALUES(?,?,?,?,?)").run(submissionId,id,user.id,note,now());
-            for (const file of stored) db().prepare("INSERT INTO attachments(id,taskId,submissionId,name,mime,size,storageKey,checksum,createdAt) VALUES(?,?,?,?,?,?,?,?,?)").run(file.attachmentId,id,submissionId,file.name,file.mime,file.size,file.stored.key,file.stored.checksum,now());
-            activity(id,user.id,"submitted",`Гүйцэтгэл илгээлээ. ${note}`.trim());
-            audit("task_submitted",{ actorId: user.id, targetType: "task", targetId: id, metadata: { fileCount: stored.length } });
+            await db().prepare("INSERT INTO submissions(id,taskId,userId,note,createdAt) VALUES(?,?,?,?,?)").run(submissionId,id,user.id,note,now());
+            for (const file of stored) await db().prepare("INSERT INTO attachments(id,taskId,submissionId,name,mime,size,storageKey,checksum,createdAt) VALUES(?,?,?,?,?,?,?,?,?)").run(file.attachmentId,id,submissionId,file.name,file.mime,file.size,file.stored.key,file.stored.checksum,now());
+            await activity(id,user.id,"submitted",`Гүйцэтгэл илгээлээ. ${note}`.trim());
+            await audit("task_submitted",{ actorId: user.id, targetType: "task", targetId: id, metadata: { fileCount: stored.length } });
           });
         } catch (error) {
           for (const file of stored) if (file.stored.created) removeAttachment(file.stored.key);
@@ -159,11 +161,11 @@ async function handlePOST(request: Request, context: Context) {
         requireAdmin(user);
         const values = z.object({ decision: z.enum(["approved","revision"]), message: z.string().trim().max(3000).default("") }).parse(await json(request));
         if (values.decision === "revision" && !values.message) throw new AppError("Засах зүйлсийг тайлбарлана уу.");
-        transaction(() => {
-          const result = db().prepare("UPDATE tasks SET status=?,updatedAt=?,approvedAt=? WHERE id=? AND status='submitted'").run(values.decision,now(),values.decision === "approved" ? now() : null,id);
+        await transaction(async () => {
+          const result = await db().prepare("UPDATE tasks SET status=?,updatedAt=?,approvedAt=? WHERE id=? AND status='submitted'").run(values.decision,now(),values.decision === "approved" ? now() : null,id);
           if (!result.changes) throw new AppError("Хянуулахаар илгээсэн ажлыг сонгоно уу.",409);
-          activity(id,user.id,values.decision,`${values.decision === "approved" ? "Гүйцэтгэлийг баталлаа." : "Засварт буцаалаа."} ${values.message}`.trim());
-          audit("task_reviewed",{ actorId: user.id, targetType: "task", targetId: id, metadata: { decision: values.decision } });
+          await activity(id,user.id,values.decision,`${values.decision === "approved" ? "Гүйцэтгэлийг баталлаа." : "Засварт буцаалаа."} ${values.message}`.trim());
+          await audit("task_reviewed",{ actorId: user.id, targetType: "task", targetId: id, metadata: { decision: values.decision } });
         }); return ok();
       }
     }
@@ -176,27 +178,27 @@ async function handlePATCH(request: Request, context: Context) {
     originCheck(request); const user = await requireUser(); requireAdmin(user);
     const [resource,id] = (await context.params).path;
     if (resource === "users" && id) {
-      const existing = db().prepare("SELECT id,role FROM users WHERE id=?").get(id) as User | undefined;
+      const existing = await db().prepare("SELECT id,role FROM users WHERE id=?").get<User>(id);
       if (!existing) throw new AppError("Ажилтан олдсонгүй.",404);
       const values = z.object({ name: z.string().trim().min(2).max(100), email, title: z.string().trim().max(100), active: z.boolean(), password: password.optional() }).parse(await json(request));
       if (id === user.id && !values.active) throw new AppError("Өөрийн эрхийг хаах боломжгүй.");
       if (existing.role === "admin" && !values.active) throw new AppError("Админы эрхийг энэ дэлгэцээс хаах боломжгүй.");
       const hash = values.password ? await hashPassword(values.password) : null;
-      transaction(() => {
-        db().prepare("UPDATE users SET name=?,email=?,title=?,active=? WHERE id=?").run(values.name,values.email,values.title,values.active ? 1 : 0,id);
-        if (hash) db().prepare("UPDATE users SET password=? WHERE id=?").run(hash,id);
-        if (hash || !values.active) db().prepare("DELETE FROM sessions WHERE userId=?").run(id);
-        audit("user_updated",{ actorId: user.id, targetType: "user", targetId: id, metadata: { active: values.active, passwordChanged: !!hash } });
+      await transaction(async () => {
+        await db().prepare("UPDATE users SET name=?,email=?,title=?,active=? WHERE id=?").run(values.name,values.email,values.title,values.active ? 1 : 0,id);
+        if (hash) await db().prepare("UPDATE users SET password=? WHERE id=?").run(hash,id);
+        if (hash || !values.active) await db().prepare("DELETE FROM sessions WHERE userId=?").run(id);
+        await audit("user_updated",{ actorId: user.id, targetType: "user", targetId: id, metadata: { active: values.active, passwordChanged: !!hash } });
       }); return ok();
     }
     if (resource === "tasks" && id) {
-      accessibleTask(id,user); const values = taskInput.parse(await json(request));
-      if (!db().prepare("SELECT id FROM users WHERE id=? AND active=1").get(values.assigneeId)) throw new AppError("Идэвхтэй ажилтан сонгоно уу.");
-      transaction(() => {
-        const result = db().prepare("UPDATE tasks SET title=?,description=?,assigneeId=?,platform=?,priority=?,dueDate=?,updatedAt=? WHERE id=? AND status IN ('planned','in_progress','revision')").run(values.title,values.description,values.assigneeId,values.platform,values.priority,values.dueDate,now(),id);
+      await accessibleTask(id,user); const values = taskInput.parse(await json(request));
+      if (!await db().prepare("SELECT id FROM users WHERE id=? AND active=1").get(values.assigneeId)) throw new AppError("Идэвхтэй ажилтан сонгоно уу.");
+      await transaction(async () => {
+        const result = await db().prepare("UPDATE tasks SET title=?,description=?,assigneeId=?,platform=?,priority=?,dueDate=?,updatedAt=? WHERE id=? AND status IN ('planned','in_progress','revision')").run(values.title,values.description,values.assigneeId,values.platform,values.priority,values.dueDate,now(),id);
         if (!result.changes) throw new AppError("Хянуулж байгаа эсвэл батлагдсан ажлыг засах боломжгүй.",409);
-        activity(id,user.id,"edited","Ажлын төлөвлөгөөг шинэчиллээ.");
-        audit("task_updated",{ actorId: user.id, targetType: "task", targetId: id });
+        await activity(id,user.id,"edited","Ажлын төлөвлөгөөг шинэчиллээ.");
+        await audit("task_updated",{ actorId: user.id, targetType: "task", targetId: id });
       }); return ok();
     }
     throw new AppError("Хүсэлт олдсонгүй.",404);

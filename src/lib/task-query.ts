@@ -17,7 +17,7 @@ function encodeCursor(task: Task) {
   return Buffer.from(JSON.stringify({ createdAt: task.createdAt, id: task.id })).toString("base64url");
 }
 
-export function taskPage(user: User, url: URL) {
+export async function taskPage(user: User, url: URL) {
   const rawLimit = Number(url.searchParams.get("limit") || 30);
   if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100) throw new AppError("limit 1–100 хооронд байна.");
   const status = url.searchParams.get("status");
@@ -32,9 +32,9 @@ export function taskPage(user: User, url: URL) {
   else if (assignee) { conditions.push("t.assigneeId=?"); parameters.push(assignee); }
   if (status === "overdue") { conditions.push("t.dueDate < ? AND t.status <> 'approved'"); parameters.push(todayInMongolia()); }
   else if (status) { conditions.push("t.status=?"); parameters.push(status); }
-  if (query) { conditions.push("(t.title LIKE ? OR t.description LIKE ? OR u.name LIKE ?)"); parameters.push(...Array(3).fill(`%${query}%`)); }
+  if (query) { conditions.push("(t.title ILIKE ? OR t.description ILIKE ? OR u.name ILIKE ?)"); parameters.push(...Array(3).fill(`%${query}%`)); }
   if (cursor) { conditions.push("(t.createdAt < ? OR (t.createdAt = ? AND t.id < ?))"); parameters.push(cursor.createdAt,cursor.createdAt,cursor.id); }
-  const rows = db().prepare(`SELECT t.id,t.title,t.description,t.assigneeId,u.name AS assigneeName,t.platform,t.priority,t.dueDate,t.status,t.createdAt,t.updatedAt,t.approvedAt,(SELECT COUNT(*) FROM attachments a WHERE a.taskId=t.id) AS attachmentCount FROM tasks t JOIN users u ON u.id=t.assigneeId ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY t.createdAt DESC,t.id DESC LIMIT ?`).all(...parameters,rawLimit + 1) as unknown as Task[];
+  const rows = await db().prepare(`SELECT t.id,t.title,t.description,t.assigneeId,u.name AS assigneeName,t.platform,t.priority,t.dueDate,t.status,t.createdAt,t.updatedAt,t.approvedAt,(SELECT COUNT(*) FROM attachments a WHERE a.taskId=t.id) AS attachmentCount FROM tasks t JOIN users u ON u.id=t.assigneeId ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY t.createdAt DESC,t.id DESC LIMIT ?`).all<Task>(...parameters,rawLimit + 1);
   const hasMore = rows.length > rawLimit;
   const items = rows.slice(0,rawLimit).map(task => ({ ...task, attachments: [], activities: [] }));
   return { items, nextCursor: hasMore ? encodeCursor(items.at(-1)!) : null };

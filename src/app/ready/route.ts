@@ -1,14 +1,14 @@
-import { db } from "@/lib/db";
-import { migrationStatus } from "@/lib/migrations";
+import { pool } from "@/lib/db";
+import { migrationStatus } from "@/lib/postgres-migrations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export function GET() {
+export async function GET() {
   try {
-    const connection = db();
-    connection.prepare("SELECT 1").get();
-    const schema = migrationStatus(connection);
+    const connection = pool();
+    await connection.query("SELECT 1");
+    const schema = await migrationStatus(connection);
     if (schema.current !== schema.latest) throw new Error("Database schema is not current.");
     return Response.json({ status: "ready" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

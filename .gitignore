@@ -7,3 +7,4 @@ backups/
 *.tsbuildinfo
 *.log
 test-results/
+.neon

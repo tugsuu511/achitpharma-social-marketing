@@ -22,7 +22,7 @@ export default function config(phase: string): NextConfig {
   ].join("; ");
 
   return {
-    serverExternalPackages: ["node:sqlite"],
+    serverExternalPackages: ["pg"],
     async headers() {
       return [{ source: "/(.*)", headers: [
         { key: "Content-Security-Policy", value: contentSecurityPolicy },
