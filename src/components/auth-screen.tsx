@@ -2,6 +2,7 @@
 import { useState, type FormEvent } from "react";
 import { ArrowRight, Check, Eye, EyeOff, ShieldCheck, Sparkles } from "lucide-react";
 import { api, Brand, Busy } from "./ui";
+import { ThemeToggle } from "./theme-toggle";
 export function AuthScreen() {
   const [busy,setBusy] = useState(false); const [error,setError] = useState(""); const [show,setShow] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -27,6 +28,7 @@ export function AuthScreen() {
       <div className="story-footer">ACHITPHARMA <span>Хамтын ажлын орон зай</span></div>
     </section>
     <section className="auth-form-side">
+      <div className="auth-theme-toggle"><ThemeToggle/></div>
       <div className="mobile-brand"><Brand/></div>
       <div className="auth-form-wrap">
         <span className="eyebrow">БАГИЙН АЖЛЫН ОРОН ЗАЙ</span>
